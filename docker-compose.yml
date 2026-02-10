@@ -1,0 +1,17 @@
+services:
+  pobudka:
+    build: .
+    container_name: pobudka
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # CLI auth persistence
+      - claude-auth:/root/.claude
+      - codex-auth:/root/.codex
+      # State persistence (timer state fallback)
+      - ./data:/app/data
+
+volumes:
+  claude-auth:
+  codex-auth:
