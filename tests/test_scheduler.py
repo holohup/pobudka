@@ -332,7 +332,7 @@ async def test_corrupt_state_file_falls_back_to_defaults(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
-async def test_schedule_next_wakeup_sets_both_timers(tmp_path: Path) -> None:
+async def test_schedule_next_wakeup_sets_only_5h_timer(tmp_path: Path) -> None:
     provider_cfg = _rolling_provider_config(wake_delay_seconds=10)
     config = _build_app_config(tmp_path / "state.json", provider_cfg)
     provider = FakeProvider("Codex")
@@ -348,8 +348,11 @@ async def test_schedule_next_wakeup_sets_both_timers(tmp_path: Path) -> None:
         target = datetime(2026, 2, 11, 12, 0, tzinfo=timezone.utc)
         state = await scheduler.schedule_next_wakeup("codex", target)
         assert state is not None
+        # Only the 5-hour timer should be set to target
         assert state.next_run_at == target
-        assert state.weekly_next_run_at == target
+        # Weekly timer should NOT be set to target; should remain computed from config
+        assert state.weekly_next_run_at != target
+        assert state.weekly_next_run_at is not None
     finally:
         await scheduler.stop()
 

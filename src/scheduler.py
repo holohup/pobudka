@@ -269,9 +269,13 @@ class WakeupScheduler:
                 state = self._default_state(provider_name, reference_time=scheduled)
                 self._states[provider_name] = state
 
-            # Explicit schedule is the next attempt for both tracks.
+            # Explicit schedule is only for the 5-hour timer.
             state.next_run_at = scheduled
-            state.weekly_next_run_at = scheduled
+            if state.weekly_next_run_at is None:
+                state.weekly_next_run_at = compute_next_weekly_run(
+                    self._config.providers[provider_name],
+                    state.last_success_at or utc_now(),
+                )
             state.backoff_until = None
             state.paused_reason = None
             await self._persist_state()
