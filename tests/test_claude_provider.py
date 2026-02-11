@@ -79,6 +79,35 @@ async def test_check_auth_non_json_auth_error(provider):
     assert status == AuthStatus.NOT_AUTHENTICATED
 
 
+@pytest.mark.asyncio
+async def test_check_auth_not_logged_in_message(provider):
+    result = CLIResult(
+        returncode=1,
+        stdout=json.dumps({"is_error": True, "result": "Not logged in · Please run /login"}),
+        stderr="",
+    )
+    with patch(
+        "src.providers.claude.run_cli", new_callable=AsyncMock, return_value=result
+    ):
+        status = await provider.check_auth()
+    assert status == AuthStatus.NOT_AUTHENTICATED
+
+
+@pytest.mark.asyncio
+async def test_start_device_auth_unsupported_in_current_cli(provider):
+    help_result = CLIResult(
+        returncode=0,
+        stdout="Commands:\n  setup-token",
+        stderr="",
+    )
+    with patch(
+        "src.providers.claude.run_cli", new_callable=AsyncMock, return_value=help_result
+    ), patch("src.providers.claude.start_long_running", new_callable=AsyncMock) as starter:
+        info = await provider.start_device_auth()
+    assert info is None
+    starter.assert_not_called()
+
+
 # --- send_wakeup ---
 
 

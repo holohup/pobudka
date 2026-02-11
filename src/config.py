@@ -23,6 +23,8 @@ class ProviderConfig:
     reset_mode: "ResetMode"
     window_seconds: int
     wake_delay_seconds: int
+    weekly_window_seconds: int = 7 * 24 * 60 * 60
+    weekly_wake_delay_seconds: int = 10
 
 
 class ResetMode(str, Enum):
@@ -51,16 +53,30 @@ _PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
         "wakeup_message": "hi",
         "reset_mode": ResetMode.CLOCK_ALIGNED_HOUR.value,
         "window_seconds": "18000",
-        "wake_delay_seconds": "2",
+        "wake_delay_seconds": "10",
+        "weekly_window_seconds": "604800",
+        "weekly_wake_delay_seconds": "10",
     },
     "codex": {
-        "model": "o4-mini",
+        "model": "gpt-5.1-codex-mini",
         "wakeup_message": "say hi",
         "reset_mode": ResetMode.ROLLING.value,
         "window_seconds": "18000",
-        "wake_delay_seconds": "2",
+        "wake_delay_seconds": "10",
+        "weekly_window_seconds": "604800",
+        "weekly_wake_delay_seconds": "10",
     },
 }
+
+
+def _normalize_env_aliases() -> None:
+    """Normalize legacy environment variable names used by CLIs."""
+    # Claude CLI expects CLAUDE_CODE_OAUTH_TOKEN. Keep backward compatibility
+    # with older setup docs that used CLAUDE_AUTH_TOKEN.
+    if "CLAUDE_CODE_OAUTH_TOKEN" not in os.environ:
+        legacy = os.environ.get("CLAUDE_AUTH_TOKEN")
+        if legacy:
+            os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = legacy
 
 
 def _env(key: str, default: str | None = None) -> str:
@@ -89,6 +105,8 @@ def _env_int(key: str, default: int, *, minimum: int = 0) -> int:
 
 def load_config() -> AppConfig:
     """Load configuration from environment variables."""
+    _normalize_env_aliases()
+
     telegram = TelegramConfig(
         bot_token=_env("TELEGRAM_BOT_TOKEN"),
         chat_id=_env("TELEGRAM_CHAT_ID"),
@@ -131,7 +149,17 @@ def load_config() -> AppConfig:
             ),
             wake_delay_seconds=_env_int(
                 f"{prefix}_WAKE_DELAY_SECONDS",
-                int(defaults.get("wake_delay_seconds", "2")),
+                int(defaults.get("wake_delay_seconds", "10")),
+                minimum=0,
+            ),
+            weekly_window_seconds=_env_int(
+                f"{prefix}_WEEKLY_WINDOW_SECONDS",
+                int(defaults.get("weekly_window_seconds", str(7 * 24 * 60 * 60))),
+                minimum=1,
+            ),
+            weekly_wake_delay_seconds=_env_int(
+                f"{prefix}_WEEKLY_WAKE_DELAY_SECONDS",
+                int(defaults.get("weekly_wake_delay_seconds", "10")),
                 minimum=0,
             ),
         )

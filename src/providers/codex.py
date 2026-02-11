@@ -19,8 +19,9 @@ from src.providers.subprocess import CLIResult, run_cli, start_long_running
 logger = logging.getLogger(__name__)
 
 # Patterns for parsing device-code output
-_DEVICE_CODE_RE = re.compile(r"(?:code|Code)[:\s]+([A-Z0-9-]{4,12})", re.IGNORECASE)
+_DEVICE_CODE_RE = re.compile(r"\b([A-Z0-9]{4,}(?:-[A-Z0-9]{2,})+)\b")
 _DEVICE_URL_RE = re.compile(r"(https?://\S*(?:device|auth)\S*)", re.IGNORECASE)
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
 # Pattern for parsing rate-limit reset time
 _RATE_LIMIT_RE = re.compile(
@@ -31,11 +32,14 @@ _RATE_LIMIT_RE = re.compile(
 _AUTH_ERROR_KEYWORDS = (
     "could not be refreshed",
     "refresh_token_reused",
+    "not logged in",
     "not authenticated",
     "authentication required",
     "please log in",
     "login required",
     "unauthorized",
+    "401 unauthorized",
+    "missing bearer",
     "sign in again",
 )
 
@@ -79,6 +83,7 @@ class CodexProvider:
             self._config.wakeup_message,
             "--full-auto",
             "--json",
+            "--skip-git-repo-check",
             "-m",
             self._config.model,
             timeout=60,
@@ -108,13 +113,14 @@ class CodexProvider:
             await self.cancel_device_auth()
             return None
 
-        code_match = _DEVICE_CODE_RE.search(output)
-        url_match = _DEVICE_URL_RE.search(output)
+        cleaned = _strip_ansi(output)
+        code_match = _DEVICE_CODE_RE.search(cleaned)
+        url_match = _DEVICE_URL_RE.search(cleaned)
 
         if not code_match or not url_match:
             logger.warning(
                 "Could not parse device code from Codex CLI output: %s",
-                output[:300],
+                cleaned[:300],
             )
             await self.cancel_device_auth()
             return None
@@ -165,7 +171,7 @@ class CodexProvider:
                     break
                 decoded = line.decode(errors="replace")
                 chunks.append(decoded)
-                combined = "".join(chunks)
+                combined = _strip_ansi("".join(chunks))
                 if _DEVICE_CODE_RE.search(combined) and _DEVICE_URL_RE.search(combined):
                     break
         except asyncio.TimeoutError:
@@ -237,3 +243,8 @@ class CodexProvider:
             )
 
         return WakeupResult(success=True, message="OK")
+
+
+def _strip_ansi(text: str) -> str:
+    """Strip ANSI escape sequences from CLI output."""
+    return _ANSI_ESCAPE_RE.sub("", text)

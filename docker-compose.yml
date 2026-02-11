@@ -6,6 +6,8 @@ services:
     env_file:
       - .env
     volumes:
+      # Home-level auth metadata persistence (Claude stores .claude.json here)
+      - root-home:/root
       # CLI auth persistence
       - claude-auth:/root/.claude
       - codex-auth:/root/.codex
@@ -13,5 +15,6 @@ services:
       - ./data:/app/data
 
 volumes:
+  root-home:
   claude-auth:
   codex-auth:

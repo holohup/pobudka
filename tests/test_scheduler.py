@@ -21,6 +21,7 @@ from src.scheduler import (
     ProviderScheduleState,
     WakeupScheduler,
     compute_next_run,
+    compute_next_weekly_run,
     parse_duration_seconds,
 )
 
@@ -132,6 +133,20 @@ def test_compute_next_run_clock_aligned() -> None:
     )
 
 
+def test_compute_next_weekly_run() -> None:
+    cfg = _rolling_provider_config(wake_delay_seconds=10)
+    success_at = datetime(2026, 2, 10, 10, 13, 0, tzinfo=timezone.utc)
+    assert compute_next_weekly_run(cfg, success_at) == datetime(
+        2026,
+        2,
+        17,
+        10,
+        13,
+        10,
+        tzinfo=timezone.utc,
+    )
+
+
 def test_parse_duration_seconds() -> None:
     assert parse_duration_seconds("Try again in 3 days 1 hour 58 minutes") == (
         3 * 24 * 60 * 60 + 1 * 60 * 60 + 58 * 60
@@ -195,13 +210,9 @@ async def test_transient_failure_exponential_backoff(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_auth_pause_then_auto_resume(tmp_path: Path) -> None:
+async def test_auth_failure_triggers_single_auto_auth_request(tmp_path: Path) -> None:
     provider_cfg = _rolling_provider_config(wake_delay_seconds=0)
-    config = _build_app_config(
-        tmp_path / "state.json",
-        provider_cfg,
-        auth_recheck_seconds=1,
-    )
+    config = _build_app_config(tmp_path / "state.json", provider_cfg)
 
     provider = FakeProvider(
         "Codex",
@@ -211,9 +222,13 @@ async def test_auth_pause_then_auto_resume(tmp_path: Path) -> None:
                 message="expired token",
                 failure_kind=WakeupFailureKind.AUTH,
             ),
+            WakeupResult(
+                success=False,
+                message="still expired",
+                failure_kind=WakeupFailureKind.AUTH,
+            ),
             WakeupResult(success=True, message="ok"),
         ],
-        auth_statuses=[AuthStatus.OK],
     )
 
     notifications: list[str] = []
@@ -228,15 +243,26 @@ async def test_auth_pause_then_auto_resume(tmp_path: Path) -> None:
 
     await scheduler.start()
     try:
-        await asyncio.sleep(2.2)
-
-        state = scheduler.get_state("codex")
-        assert state is not None
-        assert state.paused_reason is None
-        assert state.last_success_at is not None
-        assert state.consecutive_failures == 0
-        assert provider.send_calls >= 2
+        await scheduler.trigger_wakeup("codex")
+        state1 = scheduler.get_state("codex")
+        assert state1 is not None
+        assert state1.paused_reason == "auth_required"
+        assert state1.auth_request_sent
         assert auth_requests == ["codex"]
+
+        await scheduler.trigger_wakeup("codex")
+        state2 = scheduler.get_state("codex")
+        assert state2 is not None
+        assert state2.auth_request_sent
+        # No repeated automatic /auth triggers.
+        assert auth_requests == ["codex"]
+
+        await scheduler.trigger_wakeup("codex")
+        state3 = scheduler.get_state("codex")
+        assert state3 is not None
+        assert state3.paused_reason is None
+        assert not state3.auth_request_sent
+        assert state3.last_success_at is not None
     finally:
         await scheduler.stop()
 
@@ -301,6 +327,29 @@ async def test_corrupt_state_file_falls_back_to_defaults(tmp_path: Path) -> None
         state = scheduler.get_state("codex")
         assert isinstance(state, ProviderScheduleState)
         assert state is not None
+    finally:
+        await scheduler.stop()
+
+
+@pytest.mark.asyncio
+async def test_schedule_next_wakeup_sets_both_timers(tmp_path: Path) -> None:
+    provider_cfg = _rolling_provider_config(wake_delay_seconds=10)
+    config = _build_app_config(tmp_path / "state.json", provider_cfg)
+    provider = FakeProvider("Codex")
+    scheduler = WakeupScheduler(
+        config=config,
+        providers={"codex": provider},
+        notify=lambda text: _append_async([], text),
+        request_auth=lambda name: _append_async([], name),
+    )
+
+    await scheduler.start()
+    try:
+        target = datetime(2026, 2, 11, 12, 0, tzinfo=timezone.utc)
+        state = await scheduler.schedule_next_wakeup("codex", target)
+        assert state is not None
+        assert state.next_run_at == target
+        assert state.weekly_next_run_at == target
     finally:
         await scheduler.stop()
 

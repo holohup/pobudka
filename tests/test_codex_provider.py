@@ -50,6 +50,16 @@ async def test_check_auth_not_logged_in(provider):
 
 
 @pytest.mark.asyncio
+async def test_check_auth_not_logged_in_phrase(provider):
+    result = CLIResult(returncode=1, stdout="Not logged in", stderr="")
+    with patch(
+        "src.providers.codex.run_cli", new_callable=AsyncMock, return_value=result
+    ):
+        status = await provider.check_auth()
+    assert status == AuthStatus.NOT_AUTHENTICATED
+
+
+@pytest.mark.asyncio
 async def test_check_auth_error(provider):
     result = CLIResult(returncode=1, stdout="", stderr="something went wrong")
     with patch(
@@ -73,9 +83,10 @@ async def test_send_wakeup_success(provider):
     result = CLIResult(returncode=0, stdout=jsonl, stderr="")
     with patch(
         "src.providers.codex.run_cli", new_callable=AsyncMock, return_value=result
-    ):
+    ) as run_mock:
         wakeup = await provider.send_wakeup()
     assert wakeup.success
+    assert "--skip-git-repo-check" in run_mock.call_args.args
 
 
 @pytest.mark.asyncio
@@ -137,3 +148,34 @@ async def test_send_wakeup_timeout(provider):
     assert not wakeup.success
     assert wakeup.failure_kind == WakeupFailureKind.TRANSIENT
     assert "timed out" in wakeup.message.lower()
+
+
+# --- device auth ---
+
+
+@pytest.mark.asyncio
+async def test_start_device_auth_parses_ansi_device_output(provider):
+    output = (
+        "\nWelcome to Codex [v\x1b[90m0.87.0\x1b[0m]\n"
+        "Follow these steps to sign in with ChatGPT using device code authorization:\n"
+        "1. Open this link in your browser\n"
+        "   \x1b[94mhttps://auth.openai.com/codex/device\x1b[0m\n"
+        "2. Enter this one-time code \x1b[90m(expires in 15 minutes)\x1b[0m\n"
+        "   \x1b[94m9HVM-YVL8Y\x1b[0m\n"
+    )
+
+    with patch(
+        "src.providers.codex.start_long_running",
+        new_callable=AsyncMock,
+        return_value=object(),
+    ), patch.object(
+        provider,
+        "_read_initial_output",
+        new_callable=AsyncMock,
+        return_value=output,
+    ):
+        info = await provider.start_device_auth()
+
+    assert info is not None
+    assert info.url == "https://auth.openai.com/codex/device"
+    assert info.code == "9HVM-YVL8Y"

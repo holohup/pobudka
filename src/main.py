@@ -32,11 +32,10 @@ async def startup_auth_check(bot: TelegramBot) -> None:
         if status != AuthStatus.OK:
             needs_auth.append(name)
 
-    await bot.send("\n".join(lines))
+    if needs_auth:
+        lines.append("\nUse /auth &lt;provider&gt; to attempt authentication manually.")
 
-    # Automatically start device-code auth for providers that need it
-    for name in needs_auth:
-        await bot.run_device_auth(name)
+    await bot.send("\n".join(lines))
 
 
 async def main() -> None:

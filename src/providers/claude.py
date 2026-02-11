@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 # Patterns for parsing device-code output
 _DEVICE_CODE_RE = re.compile(r"(?:code|Code)[:\s]+([A-Z0-9-]{4,12})", re.IGNORECASE)
 _DEVICE_URL_RE = re.compile(r"(https?://\S*device\S*)", re.IGNORECASE)
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+_AUTH_COMMAND_RE = re.compile(r"^\s*auth\b", re.IGNORECASE | re.MULTILINE)
 
 # Pattern for parsing rate-limit reset time
 _RATE_LIMIT_RE = re.compile(
@@ -31,9 +33,12 @@ _RATE_LIMIT_RE = re.compile(
 _AUTH_ERROR_KEYWORDS = (
     "invalid api key",
     "not authenticated",
+    "not logged in",
     "authentication required",
     "please log in",
+    "please run /login",
     "login required",
+    "/login",
     "unauthorized",
 )
 
@@ -44,6 +49,7 @@ class ClaudeProvider:
     def __init__(self, config: ProviderConfig) -> None:
         self._config = config
         self._device_auth_proc: asyncio.subprocess.Process | None = None
+        self._supports_device_auth: bool | None = None
 
     @property
     def name(self) -> str:
@@ -89,6 +95,13 @@ class ClaudeProvider:
 
     async def start_device_auth(self) -> DeviceCodeInfo | None:
         """Start the device-code auth flow."""
+        if not await self._detect_device_auth_support():
+            logger.info(
+                "Claude CLI version does not expose an 'auth' command; "
+                "device-code flow is unavailable."
+            )
+            return None
+
         await self.cancel_device_auth()
 
         self._device_auth_proc = await start_long_running(
@@ -105,13 +118,14 @@ class ClaudeProvider:
             await self.cancel_device_auth()
             return None
 
-        code_match = _DEVICE_CODE_RE.search(output)
-        url_match = _DEVICE_URL_RE.search(output)
+        cleaned = _strip_ansi(output)
+        code_match = _DEVICE_CODE_RE.search(cleaned)
+        url_match = _DEVICE_URL_RE.search(cleaned)
 
         if not code_match or not url_match:
             logger.warning(
                 "Could not parse device code from Claude CLI output: %s",
-                output[:300],
+                cleaned[:300],
             )
             await self.cancel_device_auth()
             return None
@@ -163,13 +177,23 @@ class ClaudeProvider:
                 decoded = line.decode(errors="replace")
                 chunks.append(decoded)
                 # Stop once we see something that looks like a code or URL
-                combined = "".join(chunks)
+                combined = _strip_ansi("".join(chunks))
                 if _DEVICE_CODE_RE.search(combined) and _DEVICE_URL_RE.search(combined):
                     break
         except asyncio.TimeoutError:
             pass
 
         return "".join(chunks) if chunks else None
+
+    async def _detect_device_auth_support(self) -> bool:
+        """Cache whether current Claude CLI exposes the auth command."""
+        if self._supports_device_auth is not None:
+            return self._supports_device_auth
+
+        result = await run_cli("claude", "--help", timeout=10)
+        help_text = _strip_ansi(f"{result.stdout}\n{result.stderr}")
+        self._supports_device_auth = bool(_AUTH_COMMAND_RE.search(help_text))
+        return self._supports_device_auth
 
     def _parse_auth_status(self, result: CLIResult) -> AuthStatus:
         """Determine auth status from a claude -p JSON response."""
@@ -234,3 +258,8 @@ class ClaudeProvider:
             success=True,
             message=data.get("result", "OK")[:300],
         )
+
+
+def _strip_ansi(text: str) -> str:
+    """Strip ANSI escape sequences from CLI output."""
+    return _ANSI_ESCAPE_RE.sub("", text)

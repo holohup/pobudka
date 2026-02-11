@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Awaitable, Callable
 
 from src.config import AppConfig, ProviderConfig, ResetMode
-from src.providers.base import AuthStatus, Provider, WakeupFailureKind, WakeupResult
+from src.providers.base import Provider, WakeupFailureKind, WakeupResult
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,18 @@ def compute_next_run(provider_config: ProviderConfig, success_at: datetime) -> d
         )
 
     raise ValueError(f"Unsupported reset mode: {provider_config.reset_mode!r}")
+
+
+def compute_next_weekly_run(
+    provider_config: ProviderConfig,
+    success_at: datetime,
+) -> datetime:
+    """Compute the next weekly wake-up timestamp after a successful wake-up."""
+    success_at = _ensure_utc(success_at)
+    return success_at + timedelta(
+        seconds=provider_config.weekly_window_seconds
+        + provider_config.weekly_wake_delay_seconds
+    )
 
 
 def parse_duration_seconds(text: str | None) -> int | None:
@@ -95,11 +107,13 @@ def _parse_time(value: str | None) -> datetime | None:
 @dataclass
 class ProviderScheduleState:
     next_run_at: datetime
+    weekly_next_run_at: datetime | None = None
     last_success_at: datetime | None = None
     last_attempt_at: datetime | None = None
     consecutive_failures: int = 0
     paused_reason: str | None = None
     backoff_until: datetime | None = None
+    auth_request_sent: bool = False
 
 
 class WakeupScheduler:
@@ -137,11 +151,36 @@ class WakeupScheduler:
         for name in self._providers:
             state = loaded.get(name)
             if state is None:
+                state = self._default_state(name, reference_time=now)
+            else:
                 provider_config = self._config.providers[name]
-                state = ProviderScheduleState(
-                    next_run_at=now
-                    + timedelta(seconds=provider_config.wake_delay_seconds)
-                )
+                if state.weekly_next_run_at is None:
+                    reference = state.last_success_at or now
+                    state.weekly_next_run_at = compute_next_weekly_run(
+                        provider_config,
+                        reference,
+                    )
+                if (
+                    state.last_success_at is not None
+                    and state.paused_reason is None
+                    and state.backoff_until is None
+                ):
+                    configured_next = compute_next_run(
+                        provider_config,
+                        state.last_success_at,
+                    )
+                    if state.next_run_at < configured_next:
+                        state.next_run_at = configured_next
+
+                    configured_weekly_next = compute_next_weekly_run(
+                        provider_config,
+                        state.last_success_at,
+                    )
+                    if (
+                        state.weekly_next_run_at is None
+                        or state.weekly_next_run_at < configured_weekly_next
+                    ):
+                        state.weekly_next_run_at = configured_weekly_next
             self._states[name] = state
             self._tasks[name] = asyncio.create_task(self._provider_loop(name))
 
@@ -177,7 +216,8 @@ class WakeupScheduler:
 
             status = "paused(auth_required)" if state.paused_reason else "active"
             lines.append(
-                f"{name}: {status} | next={format_time(state.next_run_at)} "
+                f"{name}: {status} | next_5h={format_time(state.next_run_at)} "
+                f"| next_7d={format_time(state.weekly_next_run_at)} "
                 f"| last_ok={format_time(state.last_success_at)} "
                 f"| failures={state.consecutive_failures}"
             )
@@ -188,45 +228,70 @@ class WakeupScheduler:
         state = self._states.get(provider_name)
         return replace(state) if state is not None else None
 
+    def reload_provider_config(
+        self,
+        provider_name: str,
+        provider_config: ProviderConfig,
+    ) -> bool:
+        """Reload one provider config in-memory without restarting the process."""
+        if provider_name not in self._providers:
+            return False
+        # AppConfig is frozen, but the providers mapping remains mutable.
+        self._config.providers[provider_name] = provider_config
+        return True
+
     async def trigger_wakeup(self, provider_name: str) -> WakeupResult | None:
         """Force an immediate wake-up attempt for one provider."""
         if provider_name not in self._providers:
+            logger.warning("Manual wake requested for unknown provider=%s", provider_name)
             return None
         if provider_name not in self._states:
-            provider_config = self._config.providers[provider_name]
-            self._states[provider_name] = ProviderScheduleState(
-                next_run_at=utc_now() + timedelta(seconds=provider_config.wake_delay_seconds)
-            )
-        return await self._attempt_wakeup(provider_name, triggered_by_user=True)
+            self._states[provider_name] = self._default_state(provider_name)
+        logger.info("Manual wake trigger accepted for provider=%s", provider_name)
+        result = await self._attempt_wakeup(provider_name, triggered_by_user=True)
+        await self._restart_provider_worker(provider_name)
+        return result
+
+    async def schedule_next_wakeup(
+        self,
+        provider_name: str,
+        next_run_at: datetime,
+    ) -> ProviderScheduleState | None:
+        """Schedule the next wake-up attempt at an explicit UTC timestamp."""
+        if provider_name not in self._providers:
+            logger.warning("Manual schedule requested for unknown provider=%s", provider_name)
+            return None
+
+        scheduled = _ensure_utc(next_run_at)
+        async with self._provider_locks[provider_name]:
+            state = self._states.get(provider_name)
+            if state is None:
+                state = self._default_state(provider_name, reference_time=scheduled)
+                self._states[provider_name] = state
+
+            # Explicit schedule is the next attempt for both tracks.
+            state.next_run_at = scheduled
+            state.weekly_next_run_at = scheduled
+            state.backoff_until = None
+            state.paused_reason = None
+            await self._persist_state()
+
+        await self._restart_provider_worker(provider_name)
+        return self.get_state(provider_name)
 
     async def _provider_loop(self, provider_name: str) -> None:
         provider = self._providers[provider_name]
-        auth_wait = self._config.scheduler.auth_recheck_seconds
 
         while not self._stop_event.is_set():
             try:
                 state = self._states[provider_name]
                 now = utc_now()
 
-                if state.paused_reason == "auth_required":
-                    status = await provider.check_auth()
-                    if status == AuthStatus.OK:
-                        state.paused_reason = None
-                        state.consecutive_failures = 0
-                        state.backoff_until = None
-                        state.next_run_at = now
-                        await self._persist_state()
-                        await self._safe_notify(
-                            f"{provider.name}: authentication restored, "
-                            "resuming wake-up schedule."
-                        )
-                    else:
-                        state.next_run_at = now + timedelta(seconds=auth_wait)
-                        await self._persist_state()
-                        await self._sleep_or_stop(auth_wait)
-                        continue
-
-                delay_seconds = (state.next_run_at - now).total_seconds()
+                primary_delay = (state.next_run_at - now).total_seconds()
+                weekly_delay = float("inf")
+                if state.weekly_next_run_at is not None:
+                    weekly_delay = (state.weekly_next_run_at - now).total_seconds()
+                delay_seconds = min(primary_delay, weekly_delay)
                 if delay_seconds > 0:
                     await self._sleep_or_stop(delay_seconds)
                     continue
@@ -251,7 +316,19 @@ class WakeupScheduler:
             state = self._states[provider_name]
             now = utc_now()
             state.last_attempt_at = now
+            if state.weekly_next_run_at is None:
+                state.weekly_next_run_at = compute_next_weekly_run(
+                    provider_config,
+                    state.last_success_at or now,
+                )
+            due_primary = triggered_by_user or now >= state.next_run_at
+            due_weekly = triggered_by_user or now >= state.weekly_next_run_at
 
+            logger.info(
+                "Wake-up attempt started provider=%s triggered_by_user=%s",
+                provider_name,
+                triggered_by_user,
+            )
             try:
                 result = await provider.send_wakeup()
             except Exception as exc:  # defensive: provider wrappers should not raise
@@ -261,6 +338,14 @@ class WakeupScheduler:
                     message=f"Unhandled wake-up error: {exc}",
                     failure_kind=WakeupFailureKind.TRANSIENT,
                 )
+            logger.info(
+                "Wake-up attempt finished provider=%s triggered_by_user=%s success=%s failure_kind=%s message=%s",
+                provider_name,
+                triggered_by_user,
+                result.success,
+                result.failure_kind.value,
+                result.message[:200],
+            )
 
             if result.success:
                 had_recovery = (
@@ -270,7 +355,11 @@ class WakeupScheduler:
                 state.consecutive_failures = 0
                 state.paused_reason = None
                 state.backoff_until = None
-                state.next_run_at = compute_next_run(provider_config, now)
+                state.auth_request_sent = False
+                if due_primary:
+                    state.next_run_at = compute_next_run(provider_config, now)
+                if due_weekly:
+                    state.weekly_next_run_at = compute_next_weekly_run(provider_config, now)
                 await self._persist_state()
 
                 if triggered_by_user or had_recovery:
@@ -287,30 +376,47 @@ class WakeupScheduler:
             )
 
             if kind == WakeupFailureKind.AUTH:
-                newly_paused = state.paused_reason != "auth_required"
+                logger.warning(
+                    "Wake-up auth failure for %s: %s",
+                    provider_name,
+                    result.message[:200],
+                )
                 state.paused_reason = "auth_required"
                 state.consecutive_failures += 1
                 state.backoff_until = None
                 state.next_run_at = now + timedelta(
-                    seconds=self._config.scheduler.auth_recheck_seconds
+                    seconds=provider_config.window_seconds
+                    + provider_config.wake_delay_seconds
+                )
+                state.weekly_next_run_at = now + timedelta(
+                    seconds=provider_config.weekly_window_seconds
+                    + provider_config.weekly_wake_delay_seconds
                 )
                 await self._persist_state()
 
-                if newly_paused or triggered_by_user:
+                if not state.auth_request_sent:
+                    state.auth_request_sent = True
+                    await self._persist_state()
                     await self._safe_notify(
                         f"{provider.name}: authentication required. "
-                        "Scheduler is paused until auth is restored."
+                        "Automatic auth was triggered once; use /auth or manual CLI "
+                        "login if needed."
                     )
-
-                try:
-                    await self._request_auth(provider_name)
-                except Exception:
-                    logger.exception(
-                        "Failed to trigger device auth for provider %s", provider_name
-                    )
+                    try:
+                        await self._request_auth(provider_name)
+                    except Exception:
+                        logger.exception(
+                            "Failed to trigger device auth for provider %s",
+                            provider_name,
+                        )
                 return result
 
             if kind == WakeupFailureKind.RATE_LIMIT:
+                logger.info(
+                    "Wake-up rate-limited for %s: %s",
+                    provider_name,
+                    result.message[:200],
+                )
                 reset_seconds = parse_duration_seconds(result.rate_limit_reset)
                 if reset_seconds is None:
                     reset_seconds = provider_config.window_seconds
@@ -318,8 +424,12 @@ class WakeupScheduler:
                 state.consecutive_failures = 0
                 state.paused_reason = None
                 state.backoff_until = None
+                state.auth_request_sent = False
                 state.next_run_at = now + timedelta(
                     seconds=reset_seconds + provider_config.wake_delay_seconds
+                )
+                state.weekly_next_run_at = now + timedelta(
+                    seconds=reset_seconds + provider_config.weekly_wake_delay_seconds
                 )
                 await self._persist_state()
 
@@ -331,6 +441,11 @@ class WakeupScheduler:
                 return result
 
             state.consecutive_failures += 1
+            logger.warning(
+                "Wake-up transient failure for %s: %s",
+                provider_name,
+                result.message[:200],
+            )
             backoff_seconds = min(
                 self._config.scheduler.retry_base_seconds
                 * (2 ** (state.consecutive_failures - 1)),
@@ -338,6 +453,7 @@ class WakeupScheduler:
             )
             state.backoff_until = now + timedelta(seconds=backoff_seconds)
             state.next_run_at = state.backoff_until
+            state.weekly_next_run_at = state.backoff_until
             await self._persist_state()
 
             if triggered_by_user or state.consecutive_failures in (1, 3, 5):
@@ -361,11 +477,28 @@ class WakeupScheduler:
         except Exception:
             logger.exception("Failed to send scheduler notification")
 
-    def _default_state(self, provider_name: str) -> ProviderScheduleState:
-        now = utc_now()
+    async def _restart_provider_worker(self, provider_name: str) -> None:
+        """Restart one worker loop so state changes take effect immediately."""
+        if not self._started or self._stop_event.is_set():
+            return
+        task = self._tasks.get(provider_name)
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        self._tasks[provider_name] = asyncio.create_task(self._provider_loop(provider_name))
+
+    def _default_state(
+        self,
+        provider_name: str,
+        *,
+        reference_time: datetime | None = None,
+    ) -> ProviderScheduleState:
+        now = utc_now() if reference_time is None else _ensure_utc(reference_time)
         provider_config = self._config.providers[provider_name]
         return ProviderScheduleState(
-            next_run_at=now + timedelta(seconds=provider_config.wake_delay_seconds)
+            next_run_at=now + timedelta(seconds=provider_config.wake_delay_seconds),
+            weekly_next_run_at=now
+            + timedelta(seconds=provider_config.weekly_wake_delay_seconds),
         )
 
     def _load_state(self) -> dict[str, ProviderScheduleState]:
@@ -400,11 +533,13 @@ class WakeupScheduler:
 
                 loaded[name] = ProviderScheduleState(
                     next_run_at=next_run_at,
+                    weekly_next_run_at=_parse_time(state_data.get("weekly_next_run_at")),
                     last_success_at=_parse_time(state_data.get("last_success_at")),
                     last_attempt_at=_parse_time(state_data.get("last_attempt_at")),
                     consecutive_failures=int(state_data.get("consecutive_failures", 0)),
                     paused_reason=state_data.get("paused_reason"),
                     backoff_until=_parse_time(state_data.get("backoff_until")),
+                    auth_request_sent=bool(state_data.get("auth_request_sent", False)),
                 )
             except (TypeError, ValueError):
                 logger.warning("Invalid scheduler state for provider %s, using default", name)
@@ -418,11 +553,13 @@ class WakeupScheduler:
                 "providers": {
                     name: {
                         "next_run_at": _serialize_time(state.next_run_at),
+                        "weekly_next_run_at": _serialize_time(state.weekly_next_run_at),
                         "last_success_at": _serialize_time(state.last_success_at),
                         "last_attempt_at": _serialize_time(state.last_attempt_at),
                         "consecutive_failures": state.consecutive_failures,
                         "paused_reason": state.paused_reason,
                         "backoff_until": _serialize_time(state.backoff_until),
+                        "auth_request_sent": state.auth_request_sent,
                     }
                     for name, state in self._states.items()
                 },
@@ -440,4 +577,3 @@ class WakeupScheduler:
                 os.replace(tmp_path, self._state_path)
             except OSError:
                 logger.exception("Failed to persist scheduler state to %s", self._state_path)
-

@@ -78,6 +78,7 @@ async def run_cli(
 
 async def start_long_running(
     *args: str,
+    env: dict[str, str] | None = None,
 ) -> asyncio.subprocess.Process:
     """Start a long-running subprocess (e.g., device-code auth flow).
 
@@ -88,5 +89,6 @@ async def start_long_running(
     return await asyncio.create_subprocess_exec(
         *args,
         stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+        env=env,
     )

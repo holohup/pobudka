@@ -35,6 +35,12 @@ def test_load_config_with_defaults(_env_vars):
     assert config.providers["codex"].wakeup_message == "say hi"
     assert config.providers["claude"].reset_mode == ResetMode.CLOCK_ALIGNED_HOUR
     assert config.providers["codex"].reset_mode == ResetMode.ROLLING
+    assert config.providers["claude"].wake_delay_seconds == 10
+    assert config.providers["codex"].wake_delay_seconds == 10
+    assert config.providers["claude"].weekly_window_seconds == 604800
+    assert config.providers["codex"].weekly_window_seconds == 604800
+    assert config.providers["claude"].weekly_wake_delay_seconds == 10
+    assert config.providers["codex"].weekly_wake_delay_seconds == 10
 
 
 def test_load_config_custom_model(_env_vars):
@@ -76,3 +82,28 @@ def test_load_config_single_provider():
     with patch.dict(os.environ, env, clear=True):
         config = load_config()
     assert list(config.providers.keys()) == ["claude"]
+
+
+def test_load_config_maps_legacy_claude_token_name():
+    env = {
+        "TELEGRAM_BOT_TOKEN": "tok",
+        "TELEGRAM_CHAT_ID": "123",
+        "ENABLED_PROVIDERS": "claude",
+        "CLAUDE_AUTH_TOKEN": "legacy-token",
+    }
+    with patch.dict(os.environ, env, clear=True):
+        load_config()
+        assert os.environ["CLAUDE_CODE_OAUTH_TOKEN"] == "legacy-token"
+
+
+def test_load_config_prefers_new_claude_token_name():
+    env = {
+        "TELEGRAM_BOT_TOKEN": "tok",
+        "TELEGRAM_CHAT_ID": "123",
+        "ENABLED_PROVIDERS": "claude",
+        "CLAUDE_AUTH_TOKEN": "legacy-token",
+        "CLAUDE_CODE_OAUTH_TOKEN": "new-token",
+    }
+    with patch.dict(os.environ, env, clear=True):
+        load_config()
+        assert os.environ["CLAUDE_CODE_OAUTH_TOKEN"] == "new-token"
