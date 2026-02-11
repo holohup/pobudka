@@ -326,7 +326,7 @@ class WakeupScheduler:
                     state.last_success_at or now,
                 )
             due_primary = triggered_by_user or now >= state.next_run_at
-            due_weekly = triggered_by_user or now >= state.weekly_next_run_at
+            due_weekly = now >= state.weekly_next_run_at
 
             logger.info(
                 "Wake-up attempt started provider=%s triggered_by_user=%s",
