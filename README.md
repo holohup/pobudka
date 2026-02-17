@@ -21,7 +21,7 @@
 │                 │     │                 │     │                 │
 │  - Commands     │     │  - 5h Timer     │     │  - Claude       │
 │  - Auth Flow    │     │  - 7d Timer     │     │  - Codex        │
-│  - Notifications│     │  - State Persist│     │  - Wake-up      │
+│  - Notifications│     │  - State Persist│     │  - (CLI Wake-up) │
 └─────────────────┘     └─────────────────┘     └─────────────────┘
 ```
 
