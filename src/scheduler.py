@@ -207,20 +207,44 @@ class WakeupScheduler:
 
     def format_status(self) -> str:
         """Render a human-readable scheduler snapshot for Telegram."""
-        lines = ["<b>Scheduler</b>"]
+        from zoneinfo import ZoneInfo
+        _ISRAEL_TZ = ZoneInfo("Asia/Jerusalem")
+
+        lines = ["<b>Schedule Status</b>\n"]
+        lines.append("<pre>")
+        lines.append("┌──────────┬──────────────┬─────────────────────────────────┬─────────────────────────────────┬─────────────────────────────────┬──────────┐")
+        lines.append("│ Provider │ Status       │ Next 5h (Israel)               │ Next 7d (Israel)               │ Last Success (Israel)          │ Failures │")
+        lines.append("├──────────┼──────────────┼─────────────────────────────────┼─────────────────────────────────┼─────────────────────────────────┼──────────┤")
+
         for name in sorted(self._providers):
             state = self._states.get(name)
             if state is None:
-                lines.append(f"{name}: not initialized")
+                lines.append(f"│ {name:<8} │ not init     │ -                               │ -                               │ -                               │ -        │")
                 continue
 
-            status = "paused(auth_required)" if state.paused_reason else "active"
+            status = "paused(auth)" if state.paused_reason else "active"
+            status = status[:12].ljust(12)
+
+            # Format times in Israel timezone
+            def format_il_time(dt: datetime | None) -> str:
+                if dt is None:
+                    return "-"
+                utc_dt = _ensure_utc(dt)
+                il_dt = utc_dt.astimezone(_ISRAEL_TZ)
+                return il_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+            next_5h = format_il_time(state.next_run_at)
+            next_7d = format_il_time(state.weekly_next_run_at)
+            last_ok = format_il_time(state.last_success_at)
+
             lines.append(
-                f"{name}: {status} | next_5h={format_time(state.next_run_at)} "
-                f"| next_7d={format_time(state.weekly_next_run_at)} "
-                f"| last_ok={format_time(state.last_success_at)} "
-                f"| failures={state.consecutive_failures}"
+                f"│ {name:<8} │ {status} │ {next_5h:<31} │ {next_7d:<31} │ {last_ok:<31} │ {state.consecutive_failures:<8} │"
             )
+
+        lines.append("└──────────┴──────────────┴─────────────────────────────────┴─────────────────────────────────┴─────────────────────────────────┴──────────┘")
+        lines.append("</pre>")
+        lines.append("\n<i>All times shown in Israel Time (Asia/Jerusalem)</i>")
+
         return "\n".join(lines)
 
     def get_state(self, provider_name: str) -> ProviderScheduleState | None:
@@ -273,6 +297,37 @@ class WakeupScheduler:
             state.next_run_at = scheduled
             if state.weekly_next_run_at is None:
                 state.weekly_next_run_at = compute_next_weekly_run(
+                    self._config.providers[provider_name],
+                    state.last_success_at or utc_now(),
+                )
+            state.backoff_until = None
+            state.paused_reason = None
+            await self._persist_state()
+
+        await self._restart_provider_worker(provider_name)
+        return self.get_state(provider_name)
+
+    async def schedule_next_weekly_wakeup(
+        self,
+        provider_name: str,
+        weekly_run_at: datetime,
+    ) -> ProviderScheduleState | None:
+        """Schedule the next weekly wake-up attempt at an explicit UTC timestamp."""
+        if provider_name not in self._providers:
+            logger.warning("Manual weekly schedule requested for unknown provider=%s", provider_name)
+            return None
+
+        scheduled = _ensure_utc(weekly_run_at)
+        async with self._provider_locks[provider_name]:
+            state = self._states.get(provider_name)
+            if state is None:
+                state = self._default_state(provider_name, reference_time=scheduled)
+                self._states[provider_name] = state
+
+            # Explicit schedule for the weekly timer.
+            state.weekly_next_run_at = scheduled
+            if state.next_run_at is None:
+                state.next_run_at = compute_next_run(
                     self._config.providers[provider_name],
                     state.last_success_at or utc_now(),
                 )

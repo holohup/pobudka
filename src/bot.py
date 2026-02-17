@@ -147,6 +147,101 @@ class TelegramBot:
             f"UTC: {target_utc.strftime('%Y-%m-%d %H:%M:%SZ')}"
         )
 
+    async def schedule_weekly_wake_at_israel_time(
+        self,
+        provider_name: str,
+        date_text: str,
+        time_text: str,
+    ) -> str:
+        """Schedule next weekly wake-up at DD.MM HH:MM Israel time."""
+        if self._scheduler is None:
+            return "Scheduler is not initialized yet."
+
+        try:
+            refreshed_config = load_config()
+        except RuntimeError as exc:
+            logger.exception("Failed to reload config for scheduled weekly wake")
+            return f"Config reload failed: {exc}"
+
+        provider_config = refreshed_config.providers.get(provider_name)
+        if provider_config is None:
+            return f"Unknown provider: {provider_name}"
+
+        if not self._scheduler.reload_provider_config(provider_name, provider_config):
+            return f"Unknown provider: {provider_name}"
+
+        try:
+            target_utc = self._parse_israel_datetime(date_text, time_text)
+        except ValueError as exc:
+            return str(exc)
+
+        state = await self._scheduler.schedule_next_weekly_wakeup(provider_name, target_utc)
+        if state is None:
+            return f"Unknown provider: {provider_name}"
+
+        target_il = target_utc.astimezone(_ISRAEL_TZ)
+        return (
+            f"{provider_name}: weekly reset scheduled for "
+            f"{target_il.strftime('%Y-%m-%d %H:%M:%S %Z')}.\n"
+            f"UTC: {target_utc.strftime('%Y-%m-%d %H:%M:%SZ')}"
+        )
+
+    def _parse_israel_datetime(self, date_text: str, time_text: str) -> datetime:
+        """Parse DD.MM HH:MM as Israel time and return UTC."""
+        # Parse date (DD.MM)
+        date_raw = date_text.strip()
+        date_parts = date_raw.split(".")
+        if len(date_parts) != 2:
+            raise ValueError(
+                "Invalid date format. Use DD.MM, e.g. /weeklywake codex 17.01 12:00"
+            )
+
+        try:
+            day = int(date_parts[0])
+            month = int(date_parts[1])
+        except ValueError:
+            raise ValueError(
+                "Invalid date format. Use DD.MM, e.g. /weeklywake codex 17.01 12:00"
+            )
+
+        if not (1 <= day <= 31):
+            raise ValueError("Day must be between 01 and 31")
+        if not (1 <= month <= 12):
+            raise ValueError("Month must be between 01 and 12")
+
+        # Parse time (HH:MM)
+        time_raw = time_text.strip()
+        if not _WAKE_TIME_RE.fullmatch(time_raw):
+            raise ValueError(
+                "Invalid time format. Use HH:MM, e.g. /weeklywake codex 17.01 12:00"
+            )
+
+        hour, minute = (int(part) for part in time_raw.split(":"))
+
+        # Build datetime in Israel timezone
+        now_utc = datetime.now(timezone.utc)
+        now_il = now_utc.astimezone(_ISRAEL_TZ)
+        current_year = now_il.year
+
+        try:
+            target_il = datetime(
+                current_year, month, day, hour, minute, 0,
+                microsecond=0,
+                tzinfo=_ISRAEL_TZ
+            )
+        except ValueError as e:
+            raise ValueError(f"Invalid date: {e}")
+
+        # If the date is in the past, try next year
+        if target_il <= now_il:
+            target_il = datetime(
+                current_year + 1, month, day, hour, minute, 0,
+                microsecond=0,
+                tzinfo=_ISRAEL_TZ
+            )
+
+        return target_il.astimezone(timezone.utc)
+
     def _next_israel_occurrence(self, time_text: str) -> tuple[datetime, bool]:
         """Return next occurrence of HH:MM in Israel timezone as UTC."""
         raw = time_text.strip()
@@ -173,6 +268,8 @@ class TelegramBot:
             "/schedule - Show scheduler state\n"
             "/wake &lt;provider&gt; - Trigger immediate wake-up\n"
             "/wake &lt;provider&gt; HH:MM - Schedule next wake in Israel time\n"
+            "/weeklywake &lt;provider&gt; DD.MM HH:MM - Schedule weekly wake in Israel time\n"
+            "  Example: /weeklywake codex 17.01 12:00\n"
             "/menu - Show command menu\n"
             "/help - Show command menu\n"
             "/start - Show command menu"
@@ -374,4 +471,40 @@ class TelegramBot:
                 "Usage:\n"
                 "/wake <provider>\n"
                 "/wake <provider> HH:MM (Israel time)"
+            )
+
+        @self._router.message(Command("weeklywake"))
+        async def cmd_weeklywake(message: Message) -> None:
+            logger.info(
+                "Received /weeklywake command chat_id=%s text=%r",
+                message.chat.id,
+                message.text,
+            )
+            if str(message.chat.id) != bot_ref._config.telegram.chat_id:
+                logger.warning(
+                    "Ignoring /weeklywake from unauthorized chat_id=%s expected=%s",
+                    message.chat.id,
+                    bot_ref._config.telegram.chat_id,
+                )
+                return
+
+            parts = (message.text or "").split()
+            if len(parts) < 4:
+                names = ", ".join(bot_ref._providers.keys())
+                await message.reply(
+                    "Usage:\n"
+                    "/weeklywake <provider> DD.MM HH:MM\n"
+                    "Example: /weeklywake codex 17.01 12:00\n"
+                    f"Available: {names}"
+                )
+                return
+
+            provider_name = parts[1].lower()
+            date_text = parts[2]
+            time_text = parts[3]
+
+            await message.reply(
+                await bot_ref.schedule_weekly_wake_at_israel_time(
+                    provider_name, date_text, time_text
+                )
             )
