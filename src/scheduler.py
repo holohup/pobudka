@@ -210,40 +210,39 @@ class WakeupScheduler:
         from zoneinfo import ZoneInfo
         _ISRAEL_TZ = ZoneInfo("Asia/Jerusalem")
 
-        lines = ["<b>Schedule Status</b>\n"]
-        lines.append("<pre>")
-        lines.append("┌──────────┬──────────────┬─────────────────────────────────┬─────────────────────────────────┬─────────────────────────────────┬──────────┐")
-        lines.append("│ Provider │ Status       │ Next 5h (Israel)               │ Next 7d (Israel)               │ Last Success (Israel)          │ Failures │")
-        lines.append("├──────────┼──────────────┼─────────────────────────────────┼─────────────────────────────────┼─────────────────────────────────┼──────────┤")
+        # Format times in Israel timezone
+        def format_il_time(dt: datetime | None) -> str:
+            if dt is None:
+                return "-"
+            utc_dt = _ensure_utc(dt)
+            il_dt = utc_dt.astimezone(_ISRAEL_TZ)
+            return il_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+        lines = ["<b>📅 Schedule Status</b>\n"]
 
         for name in sorted(self._providers):
             state = self._states.get(name)
             if state is None:
-                lines.append(f"│ {name:<8} │ not init     │ -                               │ -                               │ -                               │ -        │")
+                lines.append(f"\n<b>{name}:</b> not initialized")
                 continue
 
-            status = "paused(auth)" if state.paused_reason else "active"
-            status = status[:12].ljust(12)
+            status = "⏸ paused" if state.paused_reason else "✅ active"
+            if state.paused_reason == "auth_required":
+                status = "🔐 auth required"
 
-            # Format times in Israel timezone
-            def format_il_time(dt: datetime | None) -> str:
-                if dt is None:
-                    return "-"
-                utc_dt = _ensure_utc(dt)
-                il_dt = utc_dt.astimezone(_ISRAEL_TZ)
-                return il_dt.strftime("%Y-%m-%d %H:%M:%S")
+            lines.append(f"\n<b>┌─ {name.upper()}</b> [{status}]")
 
             next_5h = format_il_time(state.next_run_at)
             next_7d = format_il_time(state.weekly_next_run_at)
             last_ok = format_il_time(state.last_success_at)
 
-            lines.append(
-                f"│ {name:<8} │ {status} │ {next_5h:<31} │ {next_7d:<31} │ {last_ok:<31} │ {state.consecutive_failures:<8} │"
-            )
+            lines.append(f"│  <b>Next 5h:</b> {next_5h}")
+            lines.append(f"│  <b>Next 7d:</b> {next_7d}")
+            lines.append(f"│  <b>Last OK:</b> {last_ok}")
+            lines.append(f"│  <b>Failures:</b> {state.consecutive_failures}")
+            lines.append(f"└─────────────────")
 
-        lines.append("└──────────┴──────────────┴─────────────────────────────────┴─────────────────────────────────┴─────────────────────────────────┴──────────┘")
-        lines.append("</pre>")
-        lines.append("\n<i>All times shown in Israel Time (Asia/Jerusalem)</i>")
+        lines.append("\n<i>All times in Israel Time (Asia/Jerusalem)</i>")
 
         return "\n".join(lines)
 
