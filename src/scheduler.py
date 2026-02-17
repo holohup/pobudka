@@ -176,10 +176,8 @@ class WakeupScheduler:
                         provider_config,
                         state.last_success_at,
                     )
-                    if (
-                        state.weekly_next_run_at is None
-                        or state.weekly_next_run_at < configured_weekly_next
-                    ):
+                    # Only initialize weekly timer if not already set - respect manual /weeklywake settings
+                    if state.weekly_next_run_at is None:
                         state.weekly_next_run_at = configured_weekly_next
             self._states[name] = state
             self._tasks[name] = asyncio.create_task(self._provider_loop(name))
