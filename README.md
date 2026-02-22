@@ -29,8 +29,8 @@ A Telegram-controlled automation bot that periodically pings Claude and Codex CL
 │                 │     │                 │     │                 │
 │  - Commands     │     │  - 5h Timer     │     │  - Claude       │
 │  - Auth Flow    │     │  - 7d Timer     │     │  - Codex        │
-│  - Notifications│     │  - State Persist│     │  - CLI Wake-up   │
-│  - Access Ctrl  │     │  - Backoff Logic│     │  - Auth Checks   │
+│  - Notifications│     │  - State Persist│     │  - CLI Wake-up  │
+│  - Access Ctrl  │     │  - Backoff Logic│     │  - Auth Checks  │
 └─────────────────┘     └─────────────────┘     └─────────────────┘
 ```
 
