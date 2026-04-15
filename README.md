@@ -108,7 +108,7 @@ CLAUDE_MODEL=claude-sonnet-4-5-20250929
 CLAUDE_WAKEUP_MESSAGE=hi
 
 # Codex provider
-CODEX_MODEL=gpt-5.1-codex-mini
+CODEX_MODEL=gpt-5.4
 CODEX_WAKEUP_MESSAGE=say hi
 ```
 
@@ -283,7 +283,7 @@ RUN_DOCKER_INTEGRATION=1 pytest -q
 1. Use `/auth codex` to start device-code flow
 2. Follow the URL and enter the code
 3. Check status with `/check_auth codex`
-4. If you see "model is not supported with ChatGPT account", set `CODEX_MODEL` to `gpt-5.1-codex-mini` in `.env`
+4. If you see "model is not supported with ChatGPT account", set `CODEX_MODEL` to `gpt-5.4` in `.env`
 5. If you see "Not inside a trusted directory", this is handled automatically by `--skip-git-repo-check`
 
 ### Timers resetting after restart?

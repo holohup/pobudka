@@ -164,7 +164,7 @@ async def test_schedule_wake_at_israel_time_success(tmp_path: Path) -> None:
 
     provider_cfg = ProviderConfig(
         name="codex",
-        model="gpt-5.1-codex-mini",
+        model="gpt-5.4",
         wakeup_message="say hi",
         reset_mode=ResetMode.ROLLING,
         window_seconds=18000,
@@ -209,7 +209,7 @@ async def test_schedule_wake_at_israel_time_invalid_format(tmp_path: Path) -> No
 
     provider_cfg = ProviderConfig(
         name="codex",
-        model="gpt-5.1-codex-mini",
+        model="gpt-5.4",
         wakeup_message="say hi",
         reset_mode=ResetMode.ROLLING,
         window_seconds=18000,
