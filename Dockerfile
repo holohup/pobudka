@@ -10,8 +10,8 @@ RUN apt-get update \
 # Install Claude Code CLI (pinned to v2.1.38)
 RUN npm install -g @anthropic-ai/claude-code@2.1.38
 
-# Install OpenAI Codex CLI (pinned to v0.87.0)
-RUN npm install -g @openai/codex@0.87.0
+# Install OpenAI Codex CLI (pinned to v0.125.0)
+RUN npm install -g @openai/codex@0.125.0
 
 # Verify CLIs are installed
 RUN claude --version && codex --version
