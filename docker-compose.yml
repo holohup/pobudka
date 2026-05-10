@@ -12,9 +12,10 @@ services:
       - claude-auth:/root/.claude
       - codex-auth:/root/.codex
       # State persistence (timer state fallback)
-      - ./data:/app/data
+      - scheduler-state:/app/data
 
 volumes:
   root-home:
   claude-auth:
   codex-auth:
+  scheduler-state:
