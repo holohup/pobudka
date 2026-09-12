@@ -58,7 +58,7 @@ _PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
         "weekly_wake_delay_seconds": "10",
     },
     "codex": {
-        "model": "gpt-5.4",
+        "model": "gpt-5.5",
         "wakeup_message": "say hi",
         "reset_mode": ResetMode.ROLLING.value,
         "window_seconds": "18000",
