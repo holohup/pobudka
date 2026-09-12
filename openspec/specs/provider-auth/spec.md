@@ -27,7 +27,7 @@ The system SHALL send wake-up requests by executing official provider CLI tools 
 
 #### Scenario: Codex wake-up via CLI
 - **WHEN** the scheduler triggers a Codex wake-up
-- **THEN** the system SHALL execute `codex exec "say hi" --full-auto` as an async subprocess
+- **THEN** the system SHALL execute `codex exec "say hi" -s workspace-write` as an async subprocess
 - **AND** capture the exit code and output to determine success or failure
 - **AND** report the result via Telegram
 

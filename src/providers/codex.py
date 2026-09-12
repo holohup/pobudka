@@ -81,7 +81,10 @@ class CodexProvider:
             "codex",
             "exec",
             self._config.wakeup_message,
-            "--full-auto",
+            # codex >= 0.154 dropped --full-auto; -s workspace-write is the
+            # equivalent and is also accepted by older pins.
+            "-s",
+            "workspace-write",
             "--json",
             "--skip-git-repo-check",
             "-m",

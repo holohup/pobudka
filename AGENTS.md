@@ -99,7 +99,7 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 - Primary check: `codex login status`.
 - Device auth command: `codex login --device-auth`.
 - Wake command uses:
-- `codex exec <message> --full-auto --json --skip-git-repo-check -m <model>`.
+- `codex exec <message> -s workspace-write --json --skip-git-repo-check -m <model>`.
 - Current default model: `gpt-5.5`.
 
 ### Environment Configuration (`.env`)
