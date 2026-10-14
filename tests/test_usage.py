@@ -274,3 +274,24 @@ def test_actual_missing_invalid_and_old_claude_outputs():
         assert caught.value.code == (
             "incompatible_cli" if name == "old-cli" else "auth_required"
         )
+
+
+@pytest.mark.asyncio
+async def test_rpc_cancellation_reaps_server(tmp_path, monkeypatch):
+    cli = tmp_path / "codex"
+    pidfile = tmp_path / "pid"
+    cli.write_text(
+        f"#!{sys.executable}\nimport os,pathlib,time\npathlib.Path({str(pidfile)!r}).write_text(str(os.getpid()))\ntime.sleep(300)\n"
+    )
+    cli.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ["PATH"])
+    task = asyncio.create_task(read_codex_rate_limits())
+    for _ in range(100):
+        if pidfile.exists():
+            break
+        await asyncio.sleep(0.01)
+    assert pidfile.exists()
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(pidfile.read_text()), 0)

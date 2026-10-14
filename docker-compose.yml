@@ -3,6 +3,7 @@ services:
     build: .
     container_name: pobudka
     restart: unless-stopped
+    init: true  # Reap CLI grandchildren after timeout/cancellation
     env_file:
       - .env
     volumes:

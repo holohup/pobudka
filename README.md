@@ -335,7 +335,7 @@ Claude uses exactly `claude -p '/usage' --output-format json`, with `LC_ALL=C.UT
 
 Codex uses initialized stdio `account/rateLimits/read`, selects the `codex` bucket and maps 300-minute / 10080-minute windows by duration. Production currently returns only a weekly window in the RPC's `primary` position. No inference thread/turn is created. See [official Codex protocol](https://learn.chatgpt.com/docs/app-server) and [Claude commands](https://code.claude.com/docs/en/commands). Collection never substitutes a model response for quota data.
 
-CLI operations serialize per provider, including bot-managed login lifetime, wake-ups and quota reads. Subprocess timeout/cancellation kills process groups and reaps children. Usage auth errors share the scheduler's notification guard without moving wake timers. Before a manual CLI login, stop Pobudka to avoid concurrent credential refresh:
+CLI operations serialize per provider, including bot-managed login lifetime, wake-ups and quota reads. Subprocess timeout/cancellation kills process groups; Compose init reaps orphaned grandchildren. Usage auth errors share the scheduler's notification guard without moving wake timers. Before a manual CLI login, stop Pobudka to avoid concurrent credential refresh:
 
 ```sh
 # Run from the production checkout; first remove CLAUDE_CODE_OAUTH_TOKEN
