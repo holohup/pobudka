@@ -49,7 +49,7 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 ### Usage Snapshots
 - `src/usage.py` publishes atomic schema-version-1 `/usage/snapshot.json` to `pobudka-usage`, separate from scheduler state.
 - Kindle Dash mounts that volume read-only; provider credentials stay in Pobudka.
-- Claude uses validated local `/usage`; Codex uses initialized stdio `account/rateLimits/read`, with windows identified by duration.
+- Claude uses validated local `/usage` JSON stream reports (tested text fallback); Codex uses initialized stdio `account/rateLimits/read`, with windows identified by duration.
 - Polling runs independently every 90 seconds (minimum); provider operations serialize through `ManagedProvider`.
 - Errors retain last good windows and collection time. Missing windows/resets stay null.
 - See README for the complete contract, auth and deployment instructions.

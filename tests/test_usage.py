@@ -295,3 +295,68 @@ async def test_rpc_cancellation_reaps_server(tmp_path, monkeypatch):
     await asyncio.gather(task, return_exceptions=True)
     with pytest.raises(ProcessLookupError):
         os.kill(int(pidfile.read_text()), 0)
+
+
+def test_claude_structured_stream_prefers_machine_fields():
+    from src.providers.usage import parse_claude_stream
+
+    rows = [
+        json.loads(line)
+        for line in (FIXTURES / "claude-2.1.300-stream.jsonl").read_text().splitlines()
+    ]
+    rows[-1]["result"] = "Changed human-readable presentation"
+    usage = parse_claude_stream("\n".join(map(json.dumps, rows)), NOW)
+    assert usage.primary == UsageWindow(0, None)
+    assert usage.weekly == UsageWindow(94, "2026-10-17T10:00:00+00:00")
+    rows[1]["usage_report"]["rate_limits"]["limits"].append(
+        {"kind": "weekly_scoped", "percent": 70, "resets_at": None, "scope": "sonnet"}
+    )
+    assert parse_claude_stream("\n".join(map(json.dumps, rows)), NOW) == usage
+
+
+@pytest.mark.parametrize(
+    "mutation,code",
+    [
+        ("tokens", "inference_detected"),
+        ("cost", "inference_detected"),
+        ("null_limits", "auth_required"),
+        ("bad_reset", "invalid_output"),
+        ("duplicate", "invalid_output"),
+    ],
+)
+def test_structured_stream_rejects_invalid_data(mutation, code):
+    from src.providers.usage import parse_claude_stream
+
+    rows = [
+        json.loads(line)
+        for line in (FIXTURES / "claude-2.1.300-stream.jsonl").read_text().splitlines()
+    ]
+    report = rows[1]["usage_report"]
+    if mutation == "tokens":
+        rows[-1]["usage"]["input_tokens"] = 1
+    elif mutation == "cost":
+        report["session"]["total_cost_usd"] = 1
+    elif mutation == "null_limits":
+        report["rate_limits"] = None
+    elif mutation == "bad_reset":
+        report["rate_limits"]["limits"][0]["resets_at"] = "2026-10-17T10:00:00"
+    else:
+        report["rate_limits"]["limits"].append(report["rate_limits"]["limits"][0])
+    with pytest.raises(UsageError) as caught:
+        parse_claude_stream("\n".join(map(json.dumps, rows)), NOW)
+    assert caught.value.code == code
+
+
+def test_stream_text_fallback_and_missing_final_result():
+    from src.providers.usage import parse_claude_stream
+
+    fixture = claude_fixture()
+    assert parse_claude_stream(json.dumps(fixture), NOW).weekly.used_percent == 94
+    for bad in (
+        "garbage",
+        "[]",
+        '{"type":"assistant"}',
+        json.dumps(fixture) + "\n" + json.dumps(fixture),
+    ):
+        with pytest.raises(UsageError):
+            parse_claude_stream(bad, NOW)

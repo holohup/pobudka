@@ -14,6 +14,12 @@ Both repos use branch `feat/browser-free-usage`. C4 is `odroid-c4`, ARM64. Pobud
 
 The exact collector commands and snapshot schema are documented in README. See [Codex app-server protocol](https://learn.chatgpt.com/docs/app-server), [Claude commands](https://code.claude.com/docs/en/commands) and [Claude print mode](https://code.claude.com/docs/en/headless).
 
+## Structured usage follow-up
+
+At the user’s request, a research subagent checked the Claude Agent SDK. The pinned CLI itself emits structured `assistant.usage_report` data with `--output-format stream-json --verbose`, confirmed live on C4 with zero API duration/turns/tokens/cost. The report contains `rate_limits.limits[]` rows (`session`, `weekly_all`) with percentages and precise ISO reset timestamps. Collection now prefers this report, retains the tested text parser only when no report is emitted, and rejects malformed reports rather than silently falling back. Hooks/settings sources are disabled for reads and session persistence is off. Wake commands retain their existing options.
+
+See [SDK research](claude-sdk-quota-research.md) for primary sources and experimental control-method tradeoffs. No SDK dependency or experimental control API is needed for the deployed collector.
+
 ## Rollback material
 
 Private C4 backups: `/srv/homelab/apps/pobudka/backups/2026-10-14-cli-usage/`. Contains original environment files, Kindle Compose override, scheduler/auth archive, fresh Claude login archive and Kindle data archive. Access is restricted by the backup directory's mode 0700. No credentials are committed.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -126,7 +127,11 @@ def parse_reset(text: str, now: datetime) -> str:
         raise UsageError("invalid_output", "Invalid reset date") from exc
 
 
-def parse_claude_usage(data: dict, now: datetime) -> SubscriptionUsage:
+def parse_claude_usage(
+    data: dict,
+    now: datetime,
+    report: dict | None = None,
+) -> SubscriptionUsage:
     """Require local `/usage`, zero inference and recognized quota lines."""
     text = str(data.get("result", ""))
     lower = text.lower()
@@ -171,6 +176,8 @@ def parse_claude_usage(data: dict, now: datetime) -> SubscriptionUsage:
         raise UsageError(
             "inference_detected", "Claude usage read reported inference tokens"
         )
+    if report is not None:
+        return parse_claude_report(report)
     windows = {}
     for label, key in (
         ("Current session", "primary"),
@@ -201,6 +208,67 @@ def parse_claude_usage(data: dict, now: datetime) -> SubscriptionUsage:
         ):
             raise UsageError("invalid_output", "Claude quota output format changed")
     return SubscriptionUsage(**windows)
+
+
+def parse_claude_report(report: dict) -> SubscriptionUsage:
+    """Read structured local usage rows; ignore scoped per-model windows."""
+    try:
+        session = report["session"]
+        if (
+            session["total_cost_usd"] != 0
+            or session["total_api_duration_ms"] != 0
+            or session["model_usage"]
+        ):
+            raise UsageError(
+                "inference_detected", "Claude usage report contains inference"
+            )
+        rate_limits = report["rate_limits"]
+        if rate_limits is None:
+            raise UsageError(
+                "auth_required", "Claude subscription quotas require full login"
+            )
+        rows = rate_limits["limits"]
+        if not isinstance(rows, list):
+            raise TypeError("invalid usage rows")
+        windows = {}
+        for row in rows:
+            key = {"session": "primary", "weekly_all": "weekly"}.get(row["kind"])
+            if key is None:
+                continue
+            if key in windows:
+                raise ValueError("duplicate quota window")
+            reset = row.get("resets_at")
+            if reset is not None:
+                instant = datetime.fromisoformat(reset)
+                if instant.tzinfo is None:
+                    raise ValueError("reset requires timezone")
+                # Upstream reset fractions vary between identical quota reads.
+                reset = utc_iso(instant.replace(microsecond=0))
+            windows[key] = UsageWindow(percentage(row["percent"]), reset)
+        if not windows:
+            raise UsageError(
+                "invalid_output", "Claude report has no subscription windows"
+            )
+        return SubscriptionUsage(**windows)
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise UsageError(
+            "invalid_output", "Invalid structured Claude usage report"
+        ) from exc
+
+
+def parse_claude_stream(stdout: str, now: datetime) -> SubscriptionUsage:
+    """Require the final local zero-inference result before using a report."""
+    try:
+        rows = [json.loads(line) for line in stdout.splitlines() if line.strip()]
+        if not rows or any(not isinstance(row, dict) for row in rows):
+            raise ValueError("invalid stream")
+        results = [row for row in rows if row.get("type") == "result"]
+        reports = [row["usage_report"] for row in rows if "usage_report" in row]
+        if len(results) != 1 or rows[-1] is not results[0] or len(reports) > 1:
+            raise ValueError("missing final result or ambiguous report")
+        return parse_claude_usage(results[0], now, reports[0] if reports else None)
+    except (ValueError, TypeError) as exc:
+        raise UsageError("invalid_output", "Invalid Claude usage JSON stream") from exc
 
 
 def parse_codex_usage(data: dict) -> SubscriptionUsage:

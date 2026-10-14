@@ -18,7 +18,7 @@ from src.providers.base import (
     WakeupResult,
 )
 from src.providers.subprocess import CLIResult, run_cli, start_long_running
-from src.providers.usage import SubscriptionUsage, UsageError, parse_claude_usage
+from src.providers.usage import SubscriptionUsage, UsageError, parse_claude_stream
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,13 @@ class ClaudeProvider:
             "-p",
             "/usage",
             "--output-format",
-            "json",
+            "stream-json",
+            "--verbose",
+            "--no-session-persistence",
+            "--settings",
+            '{"disableAllHooks":true}',
+            "--setting-sources",
+            "",
             timeout=40,
             env={
                 **os.environ,
@@ -76,15 +82,7 @@ class ClaudeProvider:
         )
         if result.returncode == -1:
             raise UsageError("timeout", "Claude quota read timed out")
-        try:
-            data = json.loads(result.stdout)
-        except ValueError as exc:
-            raise UsageError(
-                "invalid_output", "Claude did not return usage JSON"
-            ) from exc
-        if not isinstance(data, dict):
-            raise UsageError("invalid_output", "Invalid Claude usage envelope")
-        usage = parse_claude_usage(data, datetime.now(UTC))
+        usage = parse_claude_stream(result.stdout, datetime.now(UTC))
         if not result.ok:
             raise UsageError("cli_error", "Claude quota command failed")
         return usage
