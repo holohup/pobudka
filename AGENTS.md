@@ -46,6 +46,14 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 - `/wake <provider>` - run immediate wake attempt.
 - `/wake <provider> HH:MM` - schedule next wake at Israel time (`Asia/Jerusalem`).
 
+### Usage Snapshots
+- `src/usage.py` publishes atomic schema-version-1 `/usage/snapshot.json` to `pobudka-usage`, separate from scheduler state.
+- Kindle Dash mounts that volume read-only; provider credentials stay in Pobudka.
+- Claude uses validated local `/usage`; Codex uses initialized stdio `account/rateLimits/read`, with windows identified by duration.
+- Polling runs independently every 90 seconds (minimum); provider operations serialize through `ManagedProvider`.
+- Errors retain last good windows and collection time. Missing windows/resets stay null.
+- See README for the complete contract, auth and deployment instructions.
+
 ### Scheduler Behavior
 - Scheduler keeps two independent timers per provider:
 - `next_run_at` for the 5-hour cycle.
@@ -89,10 +97,9 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 
 #### Claude
 - Primary check: `claude -p "hi" --output-format json --max-turns 1`.
-- Device auth support depends on CLI version exposing `claude auth ...`.
-- If unsupported, bot returns fallback:
-- `docker compose exec -it pobudka claude setup-token`
-- Token env used by CLI: `CLAUDE_CODE_OAUTH_TOKEN`.
+- Device auth is detected from `claude auth login --help`; the tested pin uses manual `claude auth login --claudeai`.
+- Stop Pobudka before manual login; see README for the Compose run/restart procedure.
+- Full stored subscription login supports wake-ups and quota reads. Inference-only `CLAUDE_CODE_OAUTH_TOKEN` overrides the stored login and cannot supply quotas.
 - Backward-compatible alias: `CLAUDE_AUTH_TOKEN` (auto-mapped by config loader).
 
 #### Codex
@@ -138,7 +145,7 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 - Image base: `python:3.13-slim-bookworm`.
 - Node runtime: Node.js `22.x`.
 - CLI pins:
-- `@anthropic-ai/claude-code@2.1.38`
+- `@anthropic-ai/claude-code@2.1.300`
 - `@openai/codex@0.162.1`
 
 ### Operations

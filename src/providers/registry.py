@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import logging
 
-from src.config import AppConfig, ProviderConfig
+from src.config import AppConfig
 from src.providers.base import Provider
 from src.providers.claude import ClaudeProvider
 from src.providers.codex import CodexProvider
+from src.providers.managed import ManagedProvider
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,6 @@ def build_providers(config: AppConfig) -> dict[str, Provider]:
         if factory is None:
             logger.error("Unknown provider: %s (available: %s)", name, list(_FACTORIES))
             continue
-        providers[name] = factory(provider_config)
+        providers[name] = ManagedProvider(factory(provider_config))
         logger.info("Registered provider: %s", name)
     return providers

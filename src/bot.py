@@ -53,6 +53,7 @@ class TelegramBot:
         """Stop the bot and cancel pending auth flows."""
         for task in self._pending_auth.values():
             task.cancel()
+        await asyncio.gather(*self._pending_auth.values(), return_exceptions=True)
         self._pending_auth.clear()
         await self._bot.session.close()
 
@@ -292,7 +293,9 @@ class TelegramBot:
 
         # Cancel any existing auth flow for this provider
         if provider_name in self._pending_auth:
-            self._pending_auth[provider_name].cancel()
+            previous = self._pending_auth.pop(provider_name)
+            previous.cancel()
+            await asyncio.gather(previous, return_exceptions=True)
 
         await self.send(f"Starting device-code auth for {provider.name}...")
 
@@ -329,8 +332,13 @@ class TelegramBot:
                 f"Could not start device-code flow for {provider_label}.\n\n"
                 "<b>Fallback:</b> this Claude CLI version does not expose a "
                 "non-interactive device command.\n"
-                "Run interactive setup inside the container:\n"
-                "<code>docker compose exec -it pobudka claude setup-token</code>\n"
+                "Stop the bot before manual login to avoid concurrent credential refresh:\n"
+                "<code>docker compose -p pobudka --env-file ../.env stop pobudka</code>\n"
+                "<code>docker compose -p pobudka --env-file ../.env run --rm --no-deps pobudka claude auth login --claudeai</code>\n"
+                "<code>docker compose -p pobudka --env-file ../.env up -d</code>\n"
+                "Use a full subscription login; setup-token only grants inference. "
+                "Remove CLAUDE_CODE_OAUTH_TOKEN / CLAUDE_AUTH_TOKEN from .env "
+                "if set, then recreate Pobudka so the stored login is used.\n"
                 "Then run:\n"
                 "<code>/check_auth claude</code>"
             )

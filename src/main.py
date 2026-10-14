@@ -11,6 +11,7 @@ from src.config import load_config
 from src.providers.base import AuthStatus
 from src.providers.registry import build_providers
 from src.scheduler import WakeupScheduler
+from src.usage import UsagePublisher
 
 logging.basicConfig(
     level=logging.INFO,
@@ -64,14 +65,17 @@ async def main() -> None:
         request_auth=bot.run_device_auth,
     )
     bot.set_scheduler(scheduler)
+    usage = UsagePublisher(providers, scheduler.request_usage_auth)
 
     try:
         await startup_auth_check(bot)
         await scheduler.start()
+        await usage.start()
         await bot.start()
     except KeyboardInterrupt:
         logger.info("Shutting down")
     finally:
+        await usage.stop()
         await scheduler.stop()
         await bot.stop()
 

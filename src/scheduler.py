@@ -359,6 +359,20 @@ class WakeupScheduler:
                 logger.exception("Scheduler loop crashed for provider %s", provider_name)
                 await self._sleep_or_stop(5)
 
+    async def request_usage_auth(self, provider_name: str) -> None:
+        """Share the auth episode guard without changing wake timers."""
+        async with self._provider_locks[provider_name]:
+            state = self._states[provider_name]
+            if state.auth_request_sent:
+                return
+            state.auth_request_sent = True
+            await self._persist_state()
+            await self._safe_notify(
+                f"{self._providers[provider_name].name}: usage authentication required. "
+                f"Use /auth {provider_name} or complete the manual CLI login."
+            )
+            await self._request_auth(provider_name)
+
     async def _attempt_wakeup(
         self,
         provider_name: str,

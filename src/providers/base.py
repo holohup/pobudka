@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Protocol
 
+from src.providers.usage import SubscriptionUsage
+
 
 class AuthStatus(Enum):
     OK = auto()
@@ -46,6 +48,10 @@ class Provider(Protocol):
 
     async def check_auth(self) -> AuthStatus:
         """Check whether the provider has a valid authentication session."""
+        ...
+
+    async def read_usage(self) -> SubscriptionUsage:
+        """Read subscription quota windows without model inference."""
         ...
 
     async def send_wakeup(self) -> WakeupResult:

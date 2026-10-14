@@ -5,7 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
+import signal
+from datetime import UTC, datetime
 
 from src.config import ProviderConfig
 from src.providers.base import (
@@ -15,6 +18,7 @@ from src.providers.base import (
     WakeupResult,
 )
 from src.providers.subprocess import CLIResult, run_cli, start_long_running
+from src.providers.usage import SubscriptionUsage, UsageError, parse_claude_usage
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +26,6 @@ logger = logging.getLogger(__name__)
 _DEVICE_CODE_RE = re.compile(r"(?:code|Code)[:\s]+([A-Z0-9-]{4,12})", re.IGNORECASE)
 _DEVICE_URL_RE = re.compile(r"(https?://\S*device\S*)", re.IGNORECASE)
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
-_AUTH_COMMAND_RE = re.compile(r"^\s*auth\b", re.IGNORECASE | re.MULTILINE)
 
 # Pattern for parsing rate-limit reset time
 _RATE_LIMIT_RE = re.compile(
@@ -54,6 +57,37 @@ class ClaudeProvider:
     @property
     def name(self) -> str:
         return "Claude"
+
+    async def read_usage(self) -> SubscriptionUsage:
+        """Run the local usage command with deterministic English output."""
+        result = await run_cli(
+            "claude",
+            "-p",
+            "/usage",
+            "--output-format",
+            "json",
+            timeout=40,
+            env={
+                **os.environ,
+                "LC_ALL": "C.UTF-8",
+                "LANG": "C.UTF-8",
+                "TZ": "Asia/Jerusalem",
+            },
+        )
+        if result.returncode == -1:
+            raise UsageError("timeout", "Claude quota read timed out")
+        try:
+            data = json.loads(result.stdout)
+        except ValueError as exc:
+            raise UsageError(
+                "invalid_output", "Claude did not return usage JSON"
+            ) from exc
+        if not isinstance(data, dict):
+            raise UsageError("invalid_output", "Invalid Claude usage envelope")
+        usage = parse_claude_usage(data, datetime.now(UTC))
+        if not result.ok:
+            raise UsageError("cli_error", "Claude quota command failed")
+        return usage
 
     async def check_auth(self) -> AuthStatus:
         """Check auth by sending a minimal request."""
@@ -142,7 +176,7 @@ class ClaudeProvider:
             success = self._device_auth_proc.returncode == 0
             self._device_auth_proc = None
             return success
-        except asyncio.TimeoutError:
+        except TimeoutError:
             await self.cancel_device_auth()
             return False
 
@@ -150,7 +184,7 @@ class ClaudeProvider:
         """Kill any running device-auth process."""
         if self._device_auth_proc is not None:
             try:
-                self._device_auth_proc.kill()
+                os.killpg(self._device_auth_proc.pid, signal.SIGKILL)
                 await self._device_auth_proc.wait()
             except ProcessLookupError:
                 pass
@@ -180,7 +214,7 @@ class ClaudeProvider:
                 combined = _strip_ansi("".join(chunks))
                 if _DEVICE_CODE_RE.search(combined) and _DEVICE_URL_RE.search(combined):
                     break
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
 
         return "".join(chunks) if chunks else None
@@ -190,9 +224,9 @@ class ClaudeProvider:
         if self._supports_device_auth is not None:
             return self._supports_device_auth
 
-        result = await run_cli("claude", "--help", timeout=10)
+        result = await run_cli("claude", "auth", "login", "--help", timeout=10)
         help_text = _strip_ansi(f"{result.stdout}\n{result.stderr}")
-        self._supports_device_auth = bool(_AUTH_COMMAND_RE.search(help_text))
+        self._supports_device_auth = "--device" in help_text
         return self._supports_device_auth
 
     def _parse_auth_status(self, result: CLIResult) -> AuthStatus:

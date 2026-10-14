@@ -11,6 +11,8 @@ services:
       # CLI auth persistence
       - claude-auth:/root/.claude
       - codex-auth:/root/.codex
+      # Credential-free quota publication (Kindle Dash mounts read-only)
+      - usage-snapshots:/usage
       # State persistence (timer state fallback)
       - scheduler-state:/app/data
 
@@ -19,3 +21,5 @@ volumes:
   claude-auth:
   codex-auth:
   scheduler-state:
+  usage-snapshots:
+    name: pobudka-usage

@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
+import signal
 
 from src.config import ProviderConfig
 from src.providers.base import (
@@ -15,6 +17,8 @@ from src.providers.base import (
     WakeupResult,
 )
 from src.providers.subprocess import CLIResult, run_cli, start_long_running
+from src.providers.usage import SubscriptionUsage, parse_codex_usage
+from src.providers.usage_rpc import read_codex_rate_limits
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +63,10 @@ class CodexProvider:
     @property
     def name(self) -> str:
         return "Codex"
+
+    async def read_usage(self) -> SubscriptionUsage:
+        """Read subscription limits through the initialized stdio account RPC."""
+        return parse_codex_usage(await read_codex_rate_limits())
 
     async def check_auth(self) -> AuthStatus:
         """Check auth via codex login status."""
@@ -140,7 +148,7 @@ class CodexProvider:
             success = self._device_auth_proc.returncode == 0
             self._device_auth_proc = None
             return success
-        except asyncio.TimeoutError:
+        except TimeoutError:
             await self.cancel_device_auth()
             return False
 
@@ -148,7 +156,7 @@ class CodexProvider:
         """Kill any running device-auth process."""
         if self._device_auth_proc is not None:
             try:
-                self._device_auth_proc.kill()
+                os.killpg(self._device_auth_proc.pid, signal.SIGKILL)
                 await self._device_auth_proc.wait()
             except ProcessLookupError:
                 pass
@@ -177,7 +185,7 @@ class CodexProvider:
                 combined = _strip_ansi("".join(chunks))
                 if _DEVICE_CODE_RE.search(combined) and _DEVICE_URL_RE.search(combined):
                     break
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
 
         return "".join(chunks) if chunks else None
@@ -189,7 +197,6 @@ class CodexProvider:
         # Codex outputs JSONL -- parse each line, look for errors or completion
         has_error = False
         error_message = ""
-        rate_limit_reset: str | None = None
 
         for line in result.stdout.splitlines():
             line = line.strip()

@@ -7,8 +7,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Claude Code CLI (pinned to v2.1.38)
-RUN npm install -g @anthropic-ai/claude-code@2.1.38
+# Install Claude Code CLI (pinned to v2.1.300)
+RUN npm install -g @anthropic-ai/claude-code@2.1.300
 
 # Install OpenAI Codex CLI (pinned to v0.162.1 for GPT-6 Luna support)
 RUN npm install -g @openai/codex@0.162.1

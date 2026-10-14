@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import signal
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -45,6 +47,7 @@ async def run_cli(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         env=env,
+        start_new_session=True,
     )
 
     try:
@@ -52,9 +55,14 @@ async def run_cli(
             proc.communicate(),
             timeout=timeout,
         )
-    except asyncio.TimeoutError:
-        proc.kill()
+    except (TimeoutError, asyncio.CancelledError) as exc:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
         await proc.wait()
+        if isinstance(exc, asyncio.CancelledError):
+            raise
         logger.warning("Command timed out after %ds: %s", timeout, cmd_str)
         return CLIResult(returncode=-1, stdout="", stderr=f"Timed out after {timeout}s")
 
@@ -91,4 +99,5 @@ async def start_long_running(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         env=env,
+        start_new_session=True,
     )

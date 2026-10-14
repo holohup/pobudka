@@ -359,3 +359,25 @@ async def test_schedule_next_wakeup_sets_only_5h_timer(tmp_path: Path) -> None:
 
 async def _append_async(target: list[str], value: str) -> None:
     target.append(value)
+
+
+@pytest.mark.asyncio
+async def test_usage_auth_guard_preserves_both_wake_timers(tmp_path):
+    from unittest.mock import AsyncMock
+
+    config = _build_app_config(tmp_path / 'state.json', _rolling_provider_config())
+    auth = AsyncMock()
+    scheduler = WakeupScheduler(config=config, providers={'codex': FakeProvider('Codex')}, notify=AsyncMock(), request_auth=auth)
+    await scheduler.start()
+    try:
+        before = scheduler.get_state('codex')
+        await scheduler.request_usage_auth('codex')
+        await scheduler.request_usage_auth('codex')
+        after = scheduler.get_state('codex')
+        assert after.next_run_at == before.next_run_at
+        assert after.weekly_next_run_at == before.weekly_next_run_at
+        assert after.consecutive_failures == before.consecutive_failures
+        assert after.last_success_at == before.last_success_at
+        auth.assert_awaited_once_with('codex')
+    finally:
+        await scheduler.stop()
