@@ -239,6 +239,9 @@ async def test_codex_rpc_sequence_notifications_and_cleanup(
 import sys,json,time,os,pathlib
 pathlib.Path({str(pidfile)!r}).write_text(str(os.getpid()))
 a=json.loads(input());assert a['method']=='initialize'
+sys.stderr.write('diagnostic'*50000);sys.stderr.flush()
+print(json.dumps({{"id":"server-request","method":"unsupported/client/request","params":{{}}}}),flush=True)
+reply=json.loads(input());assert reply['id']=='server-request' and 'error' in reply
 print(json.dumps({{"method":"account/updated","params":{{}}}}),flush=True)
 print(json.dumps({{"id":a['id'],"result":{{}}}}),flush=True)
 assert json.loads(input())['method']=='initialized'
@@ -261,3 +264,13 @@ sys.stdin.read()
         assert (await read_codex_rate_limits())["rateLimits"]["primary"] is None
     with pytest.raises(ProcessLookupError):
         os.kill(int(pidfile.read_text()), 0)
+
+
+def test_actual_missing_invalid_and_old_claude_outputs():
+    failures = json.loads((FIXTURES / "claude-failures.json").read_text())
+    for name, envelope in failures.items():
+        with pytest.raises(UsageError) as caught:
+            parse_claude_usage(envelope, NOW)
+        assert caught.value.code == (
+            "incompatible_cli" if name == "old-cli" else "auth_required"
+        )

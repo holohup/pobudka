@@ -35,6 +35,7 @@ class TelegramBot:
         self._router = Router()
         self._dp.include_router(self._router)
         self._pending_auth: dict[str, asyncio.Task[bool]] = {}
+        self._auth_flow_locks: dict[str, asyncio.Lock] = {}
         self._scheduler: WakeupScheduler | None = None
 
         # Register handlers with access to self
@@ -285,6 +286,12 @@ class TelegramBot:
         return results
 
     async def run_device_auth(self, provider_name: str) -> None:
+        """Serialize replacement of a provider's pending login task."""
+        lock = self._auth_flow_locks.setdefault(provider_name, asyncio.Lock())
+        async with lock:
+            await self._run_device_auth(provider_name)
+
+    async def _run_device_auth(self, provider_name: str) -> None:
         """Orchestrate device-code auth for a provider via Telegram."""
         provider = self._providers.get(provider_name)
         if provider is None:

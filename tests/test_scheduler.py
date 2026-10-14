@@ -379,5 +379,10 @@ async def test_usage_auth_guard_preserves_both_wake_timers(tmp_path):
         assert after.consecutive_failures == before.consecutive_failures
         assert after.last_success_at == before.last_success_at
         auth.assert_awaited_once_with('codex')
+        await scheduler.usage_auth_recovered('codex')
+        assert not scheduler.get_state('codex').auth_request_sent
+        await scheduler.request_usage_auth('codex')
+        assert auth.await_count == 2
+        assert scheduler.get_state('codex').next_run_at == before.next_run_at
     finally:
         await scheduler.stop()

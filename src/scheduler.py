@@ -359,6 +359,14 @@ class WakeupScheduler:
                 logger.exception("Scheduler loop crashed for provider %s", provider_name)
                 await self._sleep_or_stop(5)
 
+    async def usage_auth_recovered(self, provider_name: str) -> None:
+        """Allow one notification for a later authentication failure episode."""
+        async with self._provider_locks[provider_name]:
+            state = self._states[provider_name]
+            if state.auth_request_sent:
+                state.auth_request_sent = False
+                await self._persist_state()
+
     async def request_usage_auth(self, provider_name: str) -> None:
         """Share the auth episode guard without changing wake timers."""
         async with self._provider_locks[provider_name]:

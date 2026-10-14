@@ -1,0 +1,26 @@
+{
+  "no-login": {
+    "is_error": false,
+    "local_command": "usage",
+    "duration_api_ms": 0,
+    "num_turns": 0,
+    "total_cost_usd": 0,
+    "result": "Total cost:            $0.0000\nTotal duration (API):  0s\nTotal duration (wall): 2s\nTotal code changes:    0 lines added, 0 lines removed\nUsage:                 0 input, 0 output, 0 cache read, 0 cache write"
+  },
+  "expired-login": {
+    "is_error": false,
+    "local_command": "usage",
+    "duration_api_ms": 0,
+    "num_turns": 0,
+    "total_cost_usd": 0,
+    "result": "Total cost:            $0.0000\nTotal duration (API):  0s\nTotal duration (wall): 3s\nTotal code changes:    0 lines added, 0 lines removed\nUsage:                 0 input, 0 output, 0 cache read, 0 cache write"
+  },
+  "old-cli": {
+    "is_error": false,
+    "local_command": null,
+    "duration_api_ms": 0,
+    "num_turns": 1,
+    "total_cost_usd": 0,
+    "result": "Unknown skill: usage"
+  }
+}

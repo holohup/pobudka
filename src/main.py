@@ -65,7 +65,11 @@ async def main() -> None:
         request_auth=bot.run_device_auth,
     )
     bot.set_scheduler(scheduler)
-    usage = UsagePublisher(providers, scheduler.request_usage_auth)
+    usage = UsagePublisher(
+        providers,
+        scheduler.request_usage_auth,
+        auth_recovered=scheduler.usage_auth_recovered,
+    )
 
     try:
         await startup_auth_check(bot)

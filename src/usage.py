@@ -28,9 +28,11 @@ class UsagePublisher:
         request_auth: Callable[[str], Awaitable[None]],
         path: str | None = None,
         interval: int | None = None,
+        auth_recovered: Callable[[str], Awaitable[None]] | None = None,
     ) -> None:
         self.providers = providers
         self.request_auth = request_auth
+        self.auth_recovered = auth_recovered
         self.path = Path(
             path or os.environ.get("USAGE_SNAPSHOT_PATH", "/usage/snapshot.json")
         )
@@ -66,7 +68,12 @@ class UsagePublisher:
 
     async def collect(self, name: str) -> None:
         """Update one entry, retaining successful data on any failure."""
-        entry = dict(self.entries.get(name, {}))
+        entry = {
+            "primary": None,
+            "weekly": None,
+            "updated_at": None,
+            **self.entries.get(name, {}),
+        }
         now = utc_iso(datetime.now(UTC))
         started = time.monotonic()
         auth_required = False
@@ -74,7 +81,12 @@ class UsagePublisher:
             # Includes waiting for an active login/wake; never overlap credentials.
             async with asyncio.timeout(45):
                 result = await self.providers[name].read_usage()
-            entry.update(asdict(result), updated_at=now, status="ok", error=None)
+            entry.update(
+                asdict(result),
+                updated_at=utc_iso(datetime.now(UTC)),
+                status="ok",
+                error=None,
+            )
         except Exception as exc:  # noqa: BLE001 - isolate provider failures
             code = (
                 exc.code
@@ -98,6 +110,8 @@ class UsagePublisher:
         self.publish()
         if auth_required:
             await self.request_auth(name)
+        elif entry["status"] == "ok" and self.auth_recovered:
+            await self.auth_recovered(name)
 
     def publish(self) -> None:
         """Replace snapshot atomically, including an fsync before rename."""

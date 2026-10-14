@@ -61,7 +61,7 @@ def parse_reset(text: str, now: datetime) -> str:
     if relative:
         seconds = sum(
             int(n)
-            * {"day": 86400, "hour": 3600, "minute": 60}[unit.rstrip("s").lower()]
+            * {"day": 86400, "hour": 3600, "minute": 60}[unit.lower().rstrip("s")]
             for n, unit in re.findall(
                 r"(\d+)\s*(days?|hours?|minutes?)", relative[1], re.IGNORECASE
             )
@@ -82,7 +82,20 @@ def parse_reset(text: str, now: datetime) -> str:
         h = h % 12 + (12 if period.lower() == "pm" else 0)
     try:
         if month:
-            month_number = datetime.strptime(month[:3].title(), "%b").month
+            month_number = [
+                "jan",
+                "feb",
+                "mar",
+                "apr",
+                "may",
+                "jun",
+                "jul",
+                "aug",
+                "sep",
+                "oct",
+                "nov",
+                "dec",
+            ].index(month[:3].lower()) + 1
             date = local_now.replace(
                 year=int(year or local_now.year),
                 month=month_number,
