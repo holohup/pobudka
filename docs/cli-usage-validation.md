@@ -30,4 +30,32 @@ For rollback, stop both services, restore their original environment/Compose ove
 
 ## Deployment results
 
-Native builds, final smoke checks and CPU measurements are recorded here after cutover verification.
+Both branches were pushed to GitHub, fetched on C4 and rebuilt natively for ARM64. Code deployed: Pobudka `7b17440`, Kindle Dash `66ab4d2` (later documentation commits do not change the image). The native suites passed **87 Pobudka tests** (one opt-in Docker test skipped because the native image was being tested directly) and **307 Kindle Dash tests**. Both built images were audited: no browser binaries or Selenium/Playwright modules.
+
+Cutover completed at 19:54 UTC. The one-off native smoke used the persisted credentials without Telegram polling: both `check_auth` calls returned OK and both actual `send_wakeup` calls succeeded. CLI usage reads took 6.800 seconds for Claude and 1.196 seconds for Codex in that smoke. Claude returned 0% primary / 94% weekly; Codex 25% weekly and null primary. The bot then restarted as the sole Telegram poller.
+
+The recreated bot retained both providers' `next_run_at`, `weekly_next_run_at`, `last_success_at` and failure counts exactly as saved at shutdown. CLI credentials and scheduler data remain in the original named volumes. The inference-only environment overrides were removed after private backup; the verified full Claude login is persisted in the existing auth/home volumes. Old website profiles were moved into the private backup directory.
+
+Live checks passed: health `ok`, both provider snapshots fresh, producer usage mount writable and dashboard mount read-only, no provider auth mounts in Kindle Dash, only port 8080 exposed by the dashboard. Calendar status was OK with two events; PNG was 600×800 grayscale. The Kindle's temporary and persistent PNG MD5s matched the producer PNG, and its actual 600×800 framebuffer contained the new quota rows and calendar.
+
+An isolated new-image missing-auth scenario exercised both real collectors twice: each returned `auth_required`, retained seeded last-good data/timestamps and triggered the scheduler's auth callback once per provider. No Telegram polling or model prompt ran in that scenario. The populated production credential stores were not altered.
+
+Image sizes: Kindle Dash 984,459,136 → 246,077,217 bytes. Upgrading Claude increased Pobudka's image from 1,238,041,838 to approximately 1.50 GB; the combined image footprint still decreased.
+
+The existing scheduled Claude wake ran naturally at **20:04:44 UTC**, succeeded at 20:04:53, cleared its prior failures, and advanced both timers according to the unchanged configuration. Both dashboard providers transitioned to idle after five unchanged reads and completed their next five-minute idle polls at about 20:09:47 / 20:09:56 UTC.
+
+## CPU and process observation
+
+Collected **900 one-second cgroup CPU samples before and 900 after**, covering multiple complete polling cycles. CPU percentages use 100% for one full CPU core; C4 has four cores. The post-cutover period includes regular quota reads, calendar/render/SSH activity and the naturally scheduled Claude wake. Raw samples and process observations are retained with the private backup.
+
+| Container | Before mean / peak | After mean / peak |
+| --- | --- | --- |
+| Kindle Dash | 46.892% / 389.632% | 0.893% / 78.993% |
+| Pobudka | 3.401% / 198.418% | 11.617% / 198.444% |
+| Combined | 50.293% / 389.632% | 12.510% / 198.543% |
+
+The before-Pobudka samples include compatibility probes, so the clean conservative comparison is **12.510% for both new services versus 46.892% for the old dashboard alone**. Cgroups isolate container CPU accounting; collection has moved into Pobudka and remains measurable. Dashboard-only CPU fell about 98%, but native CLI startups still create CPU bursts. This is not a zero-cost collector.
+
+A separate one-second process observer scanned both runtime cgroups over the same post-cutover period: **zero browser-process observations**, **zero long-lived CLI PIDs** (threshold 50 seconds), at most one observed native CLI process. Docker init reaps grandchildren; idle process listings contain only the bot/init and dashboard app/prefetch/calendar/SSH processes. Final health, fresh snapshots, PNG and calendar checks all passed.
+
+The private backup also retains `rollback.sh` and its helper for restoring the original source/image/config/data while keeping the newest CLI credentials (refresh tokens may have rotated). The rollback script was prepared and syntax-checked; the successful cutover did not require executing rollback.

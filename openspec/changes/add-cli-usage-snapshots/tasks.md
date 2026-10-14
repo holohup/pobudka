@@ -6,6 +6,6 @@
 - [x] Replace dashboard collection; preserve cache, calendar, render and push.
 - [x] Remove browser code/runtime/auth paths and update docs/config.
 ## 3. Deployment
-- [ ] Run regression tests and ARM64 compatibility checks.
-- [ ] Back up prod; commit/push branches; deploy via git and native rebuild.
-- [ ] Verify freshness/calendar/Kindle and CPU across cycles; document rollback.
+- [x] Run regression tests and ARM64 compatibility checks.
+- [x] Back up prod; commit/push branches; deploy via git and native rebuild.
+- [x] Verify freshness/calendar/Kindle and CPU across cycles; document rollback.
